@@ -18,8 +18,8 @@ TIMER = UNIT_DIR / "ghbackup.timer"
 DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
-def systemctl(*args, **kwargs):
-    subprocess.run(["systemctl", "--user", *args], check=False, **kwargs)
+def systemctl(*args, check=False, **kwargs):
+    subprocess.run(["systemctl", "--user", *args], check=check, **kwargs)
 
 
 def cron_to_oncalendar(expr):
