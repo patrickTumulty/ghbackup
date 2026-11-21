@@ -40,22 +40,22 @@ git clone <this-repo> && cd ghbackup
 
 ## Managing
 
-```bash
-./deactivate.sh                              # disable the timer (config is kept)
-systemctl --user list-timers ghbackup.timer  # next/last run
-systemctl --user status ghbackup             # result of the last run
-systemctl --user start ghbackup              # run a backup now
-```
+`activate.sh` installs these shell aliases.
+Open a new shell, or run `source ~/.bashrc`, to pick them up.
 
-Or run it directly: `./ghbackup.py` (uses the config) or `./ghbackup.py --output DIR`.
+| Alias       | Runs                                          | Purpose                      |
+|-------------|-----------------------------------------------|------------------------------|
+| `ghbstatus` | `systemctl --user status ghbackup`            | result of the last run       |
+| `ghbstart`  | `systemctl --user start ghbackup`             | run a backup now             |
+| `ghbtimer`  | `systemctl --user list-timers ghbackup.timer` | next/last run                |
+| `ghblogs`   | `journalctl --user -u ghbackup -e`            | logs, jumped to the end      |
 
-## Logs
-
-```bash
-journalctl --user -u ghbackup
-```
-
-The backup exits with a non-zero code if any repo fails, so the failure shows up in `systemctl --user status ghbackup`.
+- The aliases live in `~/.config/ghbackup/aliases.sh`.
+  A single line in `~/.bashrc`, tagged `# ghbackup`, loads them.
+- `./deactivate.sh` disables the timer and removes the aliases and that line.
+  The config is kept.
+- To skip systemd, run it directly: `./ghbackup.py` (uses the config) or `./ghbackup.py --output DIR`.
+- The backup exits with a non-zero code if any repo fails, so a failed run shows up in `ghbstatus`.
 
 ## Restoring
 

@@ -17,6 +17,17 @@ SERVICE = UNIT_DIR / "ghbackup.service"
 TIMER = UNIT_DIR / "ghbackup.timer"
 DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+ALIASES_FILE = CONFIG_PATH.parent / "aliases.sh"
+ALIASES = {
+    "ghbstatus": "systemctl --user status ghbackup",
+    "ghbstart": "systemctl --user start ghbackup",
+    "ghbtimer": "systemctl --user list-timers ghbackup.timer",
+    "ghblogs": "journalctl --user -u ghbackup -e",
+}
+BASHRC = Path.home() / ".bashrc"
+# The trailing marker lets uninstall find and remove exactly this line.
+BASHRC_LINE = f"[ -f {ALIASES_FILE} ] && . {ALIASES_FILE}  # ghbackup"
+
 
 def systemctl(*args, check=False, **kwargs):
     subprocess.run(["systemctl", "--user", *args], check=check, **kwargs)
@@ -65,6 +76,23 @@ def ask(prompt, value, default):
     if value or not sys.stdin.isatty():
         return value or str(default)
     return input(f"{prompt} [{default}]: ").strip() or str(default)
+
+
+def install_aliases():
+    ALIASES_FILE.write_text(
+        "".join(f"alias {name}='{cmd}'\n" for name, cmd in ALIASES.items())
+    )
+    bashrc = BASHRC.read_text() if BASHRC.exists() else ""
+    if BASHRC_LINE not in bashrc.splitlines():
+        with BASHRC.open("a") as f:
+            f.write(("\n" if bashrc and not bashrc.endswith("\n") else "") + BASHRC_LINE + "\n")
+
+
+def uninstall_aliases():
+    ALIASES_FILE.unlink(missing_ok=True)
+    if BASHRC.exists():
+        lines = BASHRC.read_text().splitlines(keepends=True)
+        BASHRC.write_text("".join(l for l in lines if l.rstrip("\n") != BASHRC_LINE))
 
 
 def install(args):
@@ -117,11 +145,13 @@ WantedBy=timers.target
 """)
     systemctl("daemon-reload", check=True)
     systemctl("enable", "--now", "ghbackup.timer", check=True)
+    install_aliases()
 
     print(f"\nBackups to: {backup_dir}\nSchedule:   {schedule}  ({calendar})")
     print(
         f"Next run:   {upcoming}\nConfig:     {CONFIG_PATH}\nLogs:       journalctl --user -u ghbackup"
     )
+    print(f"Aliases:    {', '.join(ALIASES)} (open a new shell or `source ~/.bashrc`)")
     linger = subprocess.run(
         ["loginctl", "show-user", getpass.getuser(), "-p", "Linger", "--value"],
         check=False,
@@ -139,7 +169,8 @@ def uninstall(_):
     SERVICE.unlink(missing_ok=True)
     TIMER.unlink(missing_ok=True)
     systemctl("daemon-reload", check=True)
-    print(f"ghbackup timer removed. Config kept at {CONFIG_PATH}")
+    uninstall_aliases()
+    print(f"ghbackup timer and aliases removed. Config kept at {CONFIG_PATH}")
 
 
 def main():
