@@ -2,6 +2,8 @@
 """Mirror every GitHub repo the authenticated `gh` user can access."""
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -10,6 +12,8 @@ from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".config" / "ghbackup" / "config.toml"
 DEFAULT_BACKUP_DIR = Path.home() / "github-backups"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "ghbackup"
+STATUS_PATH = STATE_DIR / "last_run.json"
 
 
 def run(*cmd):
@@ -41,10 +45,19 @@ def backup(full_name, clone_url, backup_dir):
             run("git", "clone", "--mirror", clone_url, dest)
             status = "cloned"
     except subprocess.CalledProcessError as e:
-        print(f"  {full_name}: ERROR {e.stderr.strip()}")
-        return False
+        error = e.stderr.strip()
+        print(f"  {full_name}: ERROR {error}")
+        return {"name": full_name, "ok": False, "status": "error", "error": error}
     print(f"  {full_name}: {status}")
-    return True
+    return {"name": full_name, "ok": True, "status": status}
+
+
+def write_status(**status):
+    """Record the outcome of a run for the web UI (webui.py)."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATUS_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(status, indent=2))
+    tmp.replace(STATUS_PATH)
 
 
 def load_config():
@@ -58,15 +71,33 @@ def main():
     output = output or Path(load_config().get("backup_dir", DEFAULT_BACKUP_DIR))
     backup_dir = output.expanduser().resolve()
 
-    print(f"=== {datetime.now():%Y-%m-%d %H:%M:%S} backing up to {backup_dir}")
+    started = datetime.now().astimezone()
+    print(f"=== {started:%Y-%m-%d %H:%M:%S} backing up to {backup_dir}")
     try:
         repos = get_repositories()
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"ERROR: unable to query GitHub: {getattr(e, 'stderr', e)}")
+        error = str(getattr(e, "stderr", None) or e).strip()
+        print(f"ERROR: unable to query GitHub: {error}")
+        write_status(
+            started=started.isoformat(),
+            finished=datetime.now().astimezone().isoformat(),
+            backup_dir=str(backup_dir),
+            ok=False,
+            error=f"unable to query GitHub: {error}",
+            repos=[],
+        )
         return 1
 
-    failed = sum(not backup(name, url, backup_dir) for name, url in repos)
+    results = [backup(name, url, backup_dir) for name, url in repos]
+    failed = sum(not r["ok"] for r in results)
     print(f"=== done: {len(repos) - failed}/{len(repos)} ok, {failed} failed")
+    write_status(
+        started=started.isoformat(),
+        finished=datetime.now().astimezone().isoformat(),
+        backup_dir=str(backup_dir),
+        ok=not failed,
+        repos=results,
+    )
     return 1 if failed else 0
 
 
