@@ -28,13 +28,13 @@ git clone <this-repo> && cd ghbackup
 ```
 
 - You're asked for the backup directory, a schedule in cron syntax (default `0 3 * * *`, 3am nightly)
-  and a port for the [web UI](#web-ui) (default `8080`, `0` to disable).
+  and a port for the [web UI](#web-ui) (default `8754`, `0` to disable).
   Press Enter to accept the default shown.
 - Settings are saved to `~/.config/ghbackup/config.toml`, outside the repo:
   ```toml
   backup_dir = "/home/you/github-backups"
   schedule = "0 3 * * *"
-  web_port = 8080
+  web_port = 8754
   ```
 - To change settings, run `./activate.sh` again. The prompts default to the current config.
 - A run that was missed (machine off or asleep) happens at the next boot.
@@ -62,7 +62,7 @@ Open a new shell, or run `source ~/.bashrc`, to pick them up.
 
 ## Web UI
 
-A read-only status page, served on your LAN at `http://<this-machine>:8080/`. It shows:
+A read-only status page, served on your LAN at `http://<this-machine>:8754/`. It shows:
 
 - when the last backup ran and whether it succeeded, and when the next one is due
 - every backed-up repo, its size on disk, when it was last updated and its result in the last run
@@ -70,6 +70,7 @@ A read-only status page, served on your LAN at `http://<this-machine>:8080/`. It
 
 It runs as the `ghbackup-web` systemd user service, installed by `./activate.sh`.
 To change the port, or set it to `0` to turn the page off, run `./activate.sh` again.
+If another program is already using the port you pick, `./activate.sh` says so and asks for another.
 The same data is available as JSON at `/api/status`.
 
 - The page has no login: anyone on your network can see your repo names.

@@ -2,6 +2,7 @@
 """Install or remove the ghbackup systemd user timer (used by activate.sh / deactivate.sh)."""
 
 import argparse
+import errno
 import getpass
 import json
 import re
@@ -82,6 +83,45 @@ def ask(prompt, value, default):
     return input(f"{prompt} [{default}]: ").strip() or str(default)
 
 
+def port_problem(port, current):
+    """Why the web UI can't use this port, or None if it can."""
+    if not 0 <= port <= 65535:
+        return "must be between 0 and 65535"
+    if port == 0:
+        return None
+    if port == current and subprocess.run(
+        ["systemctl", "--user", "is-active", "--quiet", "ghbackup-web.service"],
+        check=False,
+    ).returncode == 0:
+        return None  # our own web UI already holds it; it's restarted below
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Same option http.server sets, so a recently closed socket doesn't count as in use.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("0.0.0.0", port))
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                return "is already in use by another program"
+            return f"can't be used: {e.strerror}"
+    return None
+
+
+def ask_web_port(value, default):
+    """Like ask(), but re-prompts (when interactive) until the port is usable."""
+    current = load_config().get("web_port")
+    while True:
+        answer = ask("Web UI port (0 to disable)", value, default)
+        try:
+            problem = port_problem(int(answer), current)
+        except ValueError:
+            problem = "is not a number"
+        if not problem:
+            return int(answer)
+        if value or not sys.stdin.isatty():
+            sys.exit(f"Web UI port {answer} {problem}. Pick another with --web-port.")
+        print(f"Port {answer} {problem}. Pick another.")
+
+
 def install_aliases():
     ALIASES_FILE.write_text(
         "".join(f"alias {name}='{cmd}'\n" for name, cmd in ALIASES.items())
@@ -117,17 +157,7 @@ def install(args):
         upcoming = next_run(calendar)
     except ValueError as e:
         sys.exit(f"Invalid schedule {schedule!r}: {e}")
-    web_port = ask(
-        "Web UI port (0 to disable)",
-        args.web_port,
-        config.get("web_port", DEFAULT_WEB_PORT),
-    )
-    try:
-        web_port = int(web_port)
-        if not 0 <= web_port <= 65535:
-            raise ValueError
-    except ValueError:
-        sys.exit(f"Invalid web UI port {web_port!r}")
+    web_port = ask_web_port(args.web_port, config.get("web_port", DEFAULT_WEB_PORT))
 
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(

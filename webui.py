@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ghbackup import DEFAULT_BACKUP_DIR, STATUS_PATH, load_config
 
-DEFAULT_PORT = 8080
+DEFAULT_PORT = 8754
 
 
 def disk_usage(path):
