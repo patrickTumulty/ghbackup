@@ -6,15 +6,18 @@ import getpass
 import json
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
 
 from ghbackup import CONFIG_PATH, DEFAULT_BACKUP_DIR, load_config
+from webui import DEFAULT_PORT as DEFAULT_WEB_PORT
 
 UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
 SERVICE = UNIT_DIR / "ghbackup.service"
 TIMER = UNIT_DIR / "ghbackup.timer"
+WEB_SERVICE = UNIT_DIR / "ghbackup-web.service"
 DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 ALIASES_FILE = CONFIG_PATH.parent / "aliases.sh"
@@ -23,6 +26,7 @@ ALIASES = {
     "ghbstart": "systemctl --user start ghbackup",
     "ghbtimer": "systemctl --user list-timers ghbackup.timer",
     "ghblogs": "journalctl --user -u ghbackup -e",
+    "ghbweb": "systemctl --user status ghbackup-web",
 }
 BASHRC = Path.home() / ".bashrc"
 # The trailing marker lets uninstall find and remove exactly this line.
@@ -113,13 +117,26 @@ def install(args):
         upcoming = next_run(calendar)
     except ValueError as e:
         sys.exit(f"Invalid schedule {schedule!r}: {e}")
+    web_port = ask(
+        "Web UI port (0 to disable)",
+        args.web_port,
+        config.get("web_port", DEFAULT_WEB_PORT),
+    )
+    try:
+        web_port = int(web_port)
+        if not 0 <= web_port <= 65535:
+            raise ValueError
+    except ValueError:
+        sys.exit(f"Invalid web UI port {web_port!r}")
 
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(
         f"backup_dir = {json.dumps(str(backup_dir))}\nschedule = {json.dumps(schedule)}\n"
+        f"web_port = {web_port}\n"
     )
     backup_dir.mkdir(parents=True, exist_ok=True)
 
+    here = Path(__file__).resolve().parent
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
     SERVICE.write_text(f"""[Unit]
 Description=Back up GitHub repositories
@@ -129,7 +146,7 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 Environment="PATH={Path(gh).parent}:/usr/local/bin:/usr/bin:/bin"
-ExecStart="{sys.executable}" -u "{Path(__file__).resolve().parent / "ghbackup.py"}"
+ExecStart="{sys.executable}" -u "{here / "ghbackup.py"}"
 Restart=on-failure
 RestartSec=10min
 """)
@@ -143,14 +160,36 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 """)
+    if web_port:
+        WEB_SERVICE.write_text(f"""[Unit]
+Description=ghbackup web UI
+
+[Service]
+ExecStart="{sys.executable}" -u "{here / "webui.py"}" --port {web_port}
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=default.target
+""")
+    else:
+        systemctl("disable", "--now", "ghbackup-web.service", stderr=subprocess.DEVNULL)
+        WEB_SERVICE.unlink(missing_ok=True)
     systemctl("daemon-reload", check=True)
     systemctl("enable", "--now", "ghbackup.timer", check=True)
+    if web_port:
+        systemctl("enable", "ghbackup-web.service", check=True)
+        systemctl("restart", "ghbackup-web.service", check=True)
     install_aliases()
 
     print(f"\nBackups to: {backup_dir}\nSchedule:   {schedule}  ({calendar})")
     print(
         f"Next run:   {upcoming}\nConfig:     {CONFIG_PATH}\nLogs:       journalctl --user -u ghbackup"
     )
+    if web_port:
+        print(f"Web UI:     http://{socket.gethostname()}:{web_port}/")
+    else:
+        print("Web UI:     disabled")
     print(f"Aliases:    {', '.join(ALIASES)} (open a new shell or `source ~/.bashrc`)")
     linger = subprocess.run(
         ["loginctl", "show-user", getpass.getuser(), "-p", "Linger", "--value"],
@@ -166,11 +205,13 @@ WantedBy=timers.target
 
 def uninstall(_):
     systemctl("disable", "--now", "ghbackup.timer", stderr=subprocess.DEVNULL)
+    systemctl("disable", "--now", "ghbackup-web.service", stderr=subprocess.DEVNULL)
     SERVICE.unlink(missing_ok=True)
     TIMER.unlink(missing_ok=True)
+    WEB_SERVICE.unlink(missing_ok=True)
     systemctl("daemon-reload", check=True)
     uninstall_aliases()
-    print(f"ghbackup timer and aliases removed. Config kept at {CONFIG_PATH}")
+    print(f"ghbackup timer, web UI and aliases removed. Config kept at {CONFIG_PATH}")
 
 
 def main():
@@ -179,6 +220,7 @@ def main():
     p = sub.add_parser("install", help="prompt for settings and enable the timer")
     p.add_argument("--dir", help="backup directory")
     p.add_argument("--schedule", help='cron expression, e.g. "0 3 * * *"')
+    p.add_argument("--web-port", help=f"web UI port, 0 to disable (default {DEFAULT_WEB_PORT})")
     p.set_defaults(func=install)
     sub.add_parser("uninstall", help="disable the timer").set_defaults(func=uninstall)
     args = parser.parse_args()
